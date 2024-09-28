@@ -1,5 +1,5 @@
 use base64::{engine::general_purpose::STANDARD as base64_encoder, Engine};
-use image::{DynamicImage, GenericImage, ImageReader, ImageResult, RgbaImage};
+use image::{DynamicImage, GenericImage, ImageFormat, ImageReader, ImageResult, RgbaImage};
 
 use std::{
     collections::HashMap,
@@ -55,6 +55,10 @@ impl DynamicImageWithFormat {
         self.data.write_to(&mut buffer, self.format)?;
 
         Ok(buffer.into_inner())
+    }
+
+    pub fn format(&self) -> ImageFormat {
+        self.format.clone()
     }
 }
 
