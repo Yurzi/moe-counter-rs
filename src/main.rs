@@ -1,5 +1,6 @@
 mod banner;
 mod cli;
+mod db_adpater;
 mod utils;
 
 use std::sync::{Arc, RwLock};
