@@ -27,40 +27,49 @@ struct CountGetParams {
     format: Option<String>,
 }
 
+fn request_err(msg: &str) -> Response<Body> {
+    Response::builder()
+        .status(StatusCode::BAD_REQUEST)
+        .body(Body::from(msg.to_string()))
+        .unwrap()
+}
+
+fn internal_err(msg: &str) -> Response<Body> {
+    Response::builder()
+        .status(StatusCode::INTERNAL_SERVER_ERROR)
+        .body(Body::from(msg.to_string()))
+        .unwrap()
+}
+
 async fn count(
     Path(key): Path<String>,
     Query(params): Query<CountGetParams>,
     State(app_state): State<SharedState>,
 ) -> impl IntoResponse {
-    // log request
+    let config = app_state.config.read();
 
-    let app_state = app_state.try_read();
-    if app_state.is_err() {
-        return Response::builder()
-            .status(StatusCode::INTERNAL_SERVER_ERROR)
-            .body(Body::from(""))
-            .unwrap();
+    if config.is_err() {
+        return internal_err("");
     }
+    let config = config.unwrap();
 
-    let app_state = app_state.unwrap();
-    let config = app_state.config.clone();
+    let request_theme = params.theme.unwrap_or(config.default_theme.clone());
+    let request_format = params.format.unwrap_or(config.default_format.clone());
 
-    let request_theme = params.theme.unwrap_or(config.default_theme);
-    let request_format = params.format.unwrap_or(config.default_format);
     println!(
         "[GET] /{} with theme: {}, format: {}",
         key, request_theme, request_format
     );
 
-    let theme = app_state.theme_manager.get(&request_theme);
-    if theme.is_err() {
-        return Response::builder()
-            .status(StatusCode::BAD_REQUEST)
-            .body(Body::from("Theme Not Found"))
-            .unwrap();
+    let theme_manager = app_state.theme_manager.read();
+    if theme_manager.is_err() {
+        return internal_err("failed to get themes");
     }
+    let theme_manager = theme_manager.unwrap();
 
-    let theme = theme.unwrap();
+    let theme = theme_manager
+        .get(&request_theme)
+        .unwrap_or(theme_manager.get(&config.default_theme).unwrap());
 
     let number = 114514;
 
@@ -68,19 +77,13 @@ async fn count(
         "webp" => {
             let image = theme.gen_webp(number, config.digit_count);
             if image.is_err() {
-                return Response::builder()
-                    .status(StatusCode::INTERNAL_SERVER_ERROR)
-                    .body(Body::from("failed to gen webp image"))
-                    .unwrap();
+                return internal_err("failed to gen webp image");
             }
             let image = image.unwrap();
 
             let image_data = image.encode();
             if image_data.is_err() {
-                return Response::builder()
-                    .status(StatusCode::INTERNAL_SERVER_ERROR)
-                    .body(Body::from("failed to get webp image data"))
-                    .unwrap();
+                return internal_err("failed to get webp image data");
             }
 
             let image_data = image_data.unwrap();
@@ -93,10 +96,7 @@ async fn count(
         _ => {
             let image = theme.gen_svg(number, config.digit_count, config.pixelated);
             if image.is_err() {
-                return Response::builder()
-                    .status(StatusCode::INTERNAL_SERVER_ERROR)
-                    .body(Body::from("failed to gen svg image"))
-                    .unwrap();
+                return internal_err("failed to gen svg image");
             }
             let image = image.unwrap();
             Response::builder()
@@ -111,20 +111,20 @@ async fn count(
 }
 
 struct AppState {
-    config: cli::Config,
-    theme_manager: ThemeManager,
+    config: RwLock<cli::Config>,
+    theme_manager: RwLock<ThemeManager>,
 }
 
 impl AppState {
     fn new(config: cli::Config, theme_manager: ThemeManager) -> Self {
         AppState {
-            config,
-            theme_manager,
+            config: RwLock::new(config),
+            theme_manager: RwLock::new(theme_manager),
         }
     }
 }
 
-type SharedState = Arc<RwLock<AppState>>;
+type SharedState = Arc<AppState>;
 
 #[tokio::main]
 async fn main() {
@@ -135,7 +135,7 @@ async fn main() {
     // init
     let theme_manager = ThemeManager::new(&cfg.themes_dir).expect("failed to load themes");
 
-    let shared_state = SharedState::new(RwLock::new(AppState::new(cfg.clone(), theme_manager)));
+    let shared_state = SharedState::new(AppState::new(cfg.clone(), theme_manager));
 
     // initialize tracing
     tracing_subscriber::fmt::init();
