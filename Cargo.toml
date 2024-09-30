@@ -1,7 +1,6 @@
 [package]
 name = "moe-counter-rs"
 version = "0.1.0"
-author = "Yurzi <yurzi@foxmail.com>"
 edition = "2021"
 
 [dependencies]

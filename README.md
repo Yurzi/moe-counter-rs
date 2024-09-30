@@ -1,6 +1,6 @@
 # Moe-Counter-Rs
 
-使用 Rust 重写的，多种风格可选的萌萌计数器。
+使用 Rust 实现的，可跨平台的多种风格可选的萌萌计数器。
 
 <details>
 <summary>More theme</summary>
