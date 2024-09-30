@@ -69,7 +69,7 @@ async fn count(
     let number = db_manager.count(&key).await.unwrap_or(0);
 
     println!(
-        "[GET] /{} with theme: {}, format: {}, length: {}, count: {}",
+        "[GET] /{} | theme: {}, format: {}, length: {}, count: {}",
         key, request_theme, request_format, digit_count, number
     );
 
@@ -108,6 +108,75 @@ async fn count(
     };
 
     response
+}
+
+async fn demo(
+    Query(params): Query<CountGetParams>,
+    State(app_state): State<SharedState>,
+) -> impl IntoResponse {
+    let config = app_state.config.read().await.clone();
+
+    let request_theme = params.theme.unwrap_or(config.default_theme.clone());
+    let request_format = params.format.unwrap_or(config.default_format.clone());
+
+    let digit_count = 10;
+    let number = 0123456789;
+
+    let theme_manager = app_state.theme_manager.read().await;
+    let theme = theme_manager.get(&request_theme).unwrap_or(
+        theme_manager
+            .get(&config.default_theme)
+            .unwrap_or(theme_manager.get("moebooru").unwrap()),
+    );
+    println!(
+        "[GET] /{} | theme: {}, format: {}, length: {}, count: {}",
+        "demo", request_theme, request_format, digit_count, number
+    );
+
+    let response = match request_format.as_str() {
+        "webp" => {
+            let image = theme.gen_webp(number, digit_count);
+            if image.is_err() {
+                return internal_err("failed to gen webp image");
+            }
+            let image = image.unwrap();
+
+            let image_data = image.encode();
+            if image_data.is_err() {
+                return internal_err("failed to get webp image data");
+            }
+
+            let image_data = image_data.unwrap();
+            Response::builder()
+                .status(StatusCode::OK)
+                .header("Content-Type", image.format().to_mime_type())
+                .body(Body::from(image_data))
+                .unwrap()
+        }
+        _ => {
+            let image = theme.gen_svg(number, digit_count, config.pixelated);
+            if image.is_err() {
+                return internal_err("failed to gen svg image");
+            }
+            let image = image.unwrap();
+            Response::builder()
+                .status(StatusCode::OK)
+                .header("Content-Type", "image/svg+xml")
+                .body(Body::from(image.data().to_string()))
+                .unwrap()
+        }
+    };
+
+    response
+}
+
+async fn favicon() -> impl IntoResponse {
+    let favicon = Vec::from(include_bytes!("../assets/favicon.png"));
+    Response::builder()
+        .status(StatusCode::OK)
+        .header("Content-Type", image::ImageFormat::Png.to_mime_type())
+        .body(Body::from(favicon))
+        .unwrap()
 }
 
 struct AppState {
@@ -150,6 +219,8 @@ async fn main() {
     tracing_subscriber::fmt::init();
     let app = Router::new()
         .route("/status", get(status))
+        .route("/favicon.ico", get(favicon))
+        .route("/demo", get(demo))
         .route("/:key", get(count))
         .with_state(shared_state);
     let listener = tokio::net::TcpListener::bind(format!("{}:{}", cfg.listen, cfg.port))
