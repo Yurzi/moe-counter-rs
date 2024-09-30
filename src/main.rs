@@ -3,7 +3,7 @@ mod cli;
 mod db_adpater;
 mod utils;
 
-use std::sync::Arc;
+use std::sync::{atomic::AtomicBool, Arc};
 
 use axum::{
     body::Body,
@@ -18,7 +18,10 @@ use clap::Parser;
 use cli::read_config;
 use db_adpater::DBManager;
 use serde::{Deserialize, Serialize};
-use tokio::sync::{Mutex, RwLock};
+use tokio::{
+    signal,
+    sync::{Mutex, RwLock},
+};
 
 async fn status() -> String {
     "everything is ok".to_string()
@@ -228,5 +231,19 @@ async fn main() {
         .unwrap();
 
     println!("listen on: http://{}:{}", cfg.listen, cfg.port);
-    axum::serve(listener, app).await.unwrap();
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal())
+        .await
+        .unwrap();
+
+    println!("[Shutdown]")
+}
+
+#[cfg(target_os = "windows")]
+async fn shutdown_signal() {
+    signal::ctrl_c().await.expect("Failed to listen to ctrl-c");
+}
+#[cfg(target_os = "linux")]
+async fn shutdown_signal(should_exit: &AtomicBool) {
+    unimplemented!()
 }
