@@ -53,14 +53,14 @@ async fn count(
     Query(params): Query<CountGetParams>,
     State(app_state): State<SharedState>,
 ) -> impl IntoResponse {
-    let config = app_state.config.read().await;
+    let config = app_state.config.clone();
 
     let request_theme = params.theme.unwrap_or(config.default_theme.clone());
     let request_format = params.format.unwrap_or(config.default_format.clone());
     let request_len = params.length.unwrap_or(0);
     let digit_count = config.digit_count.max(request_len);
 
-    let theme_manager = app_state.theme_manager.read().await;
+    let theme_manager = &app_state.theme_manager;
 
     let theme = theme_manager.get(&request_theme).unwrap_or(
         theme_manager
@@ -68,7 +68,7 @@ async fn count(
             .unwrap_or(theme_manager.get("moebooru").unwrap()),
     );
 
-    let mut db_manager = app_state.db_manager.lock().await;
+    let db_manager = &app_state.db_manager;
     let number = db_manager.count(&key).await.unwrap_or(0);
 
     println!(
@@ -117,7 +117,7 @@ async fn demo(
     Query(params): Query<CountGetParams>,
     State(app_state): State<SharedState>,
 ) -> impl IntoResponse {
-    let config = app_state.config.read().await.clone();
+    let config = app_state.config.clone();
 
     let request_theme = params.theme.unwrap_or(config.default_theme.clone());
     let request_format = params.format.unwrap_or(config.default_format.clone());
@@ -125,7 +125,7 @@ async fn demo(
     let digit_count = 10;
     let number = 0123456789;
 
-    let theme_manager = app_state.theme_manager.read().await;
+    let theme_manager = &app_state.theme_manager;
     let theme = theme_manager.get(&request_theme).unwrap_or(
         theme_manager
             .get(&config.default_theme)
@@ -183,17 +183,17 @@ async fn favicon() -> impl IntoResponse {
 }
 
 struct AppState {
-    config: RwLock<cli::Config>,
-    theme_manager: RwLock<ThemeManager>,
-    db_manager: Mutex<DBManager>,
+    config: cli::Config,
+    theme_manager: ThemeManager,
+    db_manager: DBManager,
 }
 
 impl AppState {
     fn new(config: cli::Config, theme_manager: ThemeManager, db_manager: DBManager) -> Self {
         AppState {
-            config: RwLock::new(config),
-            theme_manager: RwLock::new(theme_manager),
-            db_manager: Mutex::new(db_manager),
+            config,
+            theme_manager,
+            db_manager,
         }
     }
 }
@@ -229,14 +229,14 @@ async fn main() {
         .route("/favicon.ico", get(favicon))
         .route("/demo", get(demo))
         .route("/:key", get(count))
-        .with_state(shared_state);
+        .with_state(shared_state.clone());
     let listener = tokio::net::TcpListener::bind(format!("{}:{}", cfg.listen, cfg.port))
         .await
         .unwrap();
 
     println!("listen on: http://{}:{}", cfg.listen, cfg.port);
     axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
+        .with_graceful_shutdown(shutdown_signal(shared_state.clone()))
         .await
         .unwrap();
 
@@ -244,14 +244,16 @@ async fn main() {
 }
 
 #[cfg(target_os = "windows")]
-async fn shutdown_signal() {
+async fn shutdown_signal(app_state: SharedState) {
     signal::ctrl_c().await.expect("Failed to listen to ctrl-c");
+    let _ = app_state.db_manager.sync_to_backend().await;
 }
 #[cfg(target_os = "linux")]
-async fn shutdown_signal() {
+async fn shutdown_signal(app_state: SharedState) {
     let mut stream = signal::unix::signal(signal::unix::SignalKind::terminate()).unwrap();
     tokio::select! {
         _ = stream.recv() => {}
         _ = tokio::signal::ctrl_c() => {}
     }
+    let _ = app_state.db_manager.sync_to_backend().await;
 }

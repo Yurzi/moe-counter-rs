@@ -1,18 +1,19 @@
+use std::sync::Arc;
 use std::{collections::HashMap, error::Error};
 use tokio::sync::Mutex;
 
 pub trait KVDBClient: Send + Sync {
     type Value;
-    async fn init(&mut self) -> Result<(), Box<dyn Error>>;
+    async fn init(&self) -> Result<(), Box<dyn Error>>;
     async fn get(&self, key: &str) -> Option<Self::Value>;
-    async fn set(&mut self, key: &str, value: Self::Value) -> Result<(), Box<dyn Error>>;
+    async fn set(&self, key: &str, value: Self::Value) -> Result<(), Box<dyn Error>>;
     async fn list(&self) -> Result<HashMap<String, Self::Value>, Box<dyn Error>>;
 }
 
 pub struct SqliteClient {
     db_path: String,
     table_name: String,
-    connection: Mutex<rusqlite::Connection>,
+    connection: Arc<Mutex<rusqlite::Connection>>,
 }
 
 impl SqliteClient {
@@ -23,14 +24,14 @@ impl SqliteClient {
         SqliteClient {
             db_path: path.to_string(),
             table_name: table_name.to_string(),
-            connection: Mutex::new(connection),
+            connection: Arc::new(Mutex::new(connection)),
         }
     }
 }
 
 impl KVDBClient for SqliteClient {
     type Value = u64;
-    async fn init(&mut self) -> Result<(), Box<dyn Error>> {
+    async fn init(&self) -> Result<(), Box<dyn Error>> {
         let sql = format!(
             "CREATE TABLE IF NOT EXISTS {} (
                 key TEXT NOT NULL UNIQUE,
@@ -57,21 +58,20 @@ impl KVDBClient for SqliteClient {
             return None;
         }
 
-        let value_iter = value_iter.unwrap();
-
+        let mut value_iter = value_iter.unwrap();
         // actually key is unqiue, so just iter all and sum.
-        let mut res = 0;
-        for value in value_iter {
-            res += match value {
-                Ok(val) => val,
-                Err(_) => 0,
-            }
-        }
+        let ret = match value_iter.next() {
+            Some(val) => match val {
+                Ok(value) => Some(value),
+                Err(_) => None,
+            },
+            None => None,
+        };
 
-        Some(res)
+        ret
     }
 
-    async fn set(&mut self, key: &str, value: Self::Value) -> Result<(), Box<dyn Error>> {
+    async fn set(&self, key: &str, value: Self::Value) -> Result<(), Box<dyn Error>> {
         let sql = format!("INSERT INTO {} (key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value", self.table_name);
         let _ret = self
             .connection
@@ -100,37 +100,66 @@ impl KVDBClient for SqliteClient {
 }
 
 pub struct DBManager {
+    cache: Arc<Mutex<HashMap<String, u64>>>,
     backend: SqliteClient,
 }
 
 impl DBManager {
     pub fn new(backend: SqliteClient) -> Self {
-        DBManager { backend }
+        DBManager {
+            cache: Arc::new(Mutex::new(HashMap::new())),
+            backend,
+        }
     }
 
     pub async fn init(&mut self) -> Result<(), Box<dyn Error>> {
         self.backend.init().await
     }
 
-    async fn conut_on_backend(&mut self, key: &str) -> Option<u64> {
-        // get count on db
-        let prev_count = self.backend.get(key).await.unwrap_or(0);
+    async fn count_on_cache(&self, key: &str) -> Option<u64> {
+        // key must exist
+        let mut cache = self.cache.lock().await;
+        let prev_count = cache.get(key).unwrap();
 
-        // add count
         let now_count = prev_count.saturating_add(1);
 
-        // set count to db
-        let ret = self.backend.set(key, now_count).await;
-
-        if ret.is_err() {
-            println!("faile to write db: {:?}", ret);
-            return None;
-        }
+        // set count to cache
+        cache.insert(key.to_string(), now_count);
 
         Some(now_count)
     }
 
-    pub async fn count(&mut self, key: &str) -> Option<u64> {
-        self.conut_on_backend(key).await
+    async fn load_to_cache(&self, key: &str, value: u64) {
+        self.cache.lock().await.insert(key.to_string(), value);
+    }
+
+    async fn check_in_cache(&self, key: &str) -> bool {
+        self.cache.lock().await.get(key).is_some()
+    }
+
+    pub async fn count(&self, key: &str) -> Option<u64> {
+        // check in cache
+        // in in cache
+        let exist_in_cache = self.check_in_cache(key).await;
+        if exist_in_cache {
+            // count on cache
+            return self.count_on_cache(key).await;
+        }
+
+        // if not in cache
+        // found key on db, if not key on db, then think the value is 0
+        let value = self.backend.get(key).await.unwrap_or(0);
+        self.load_to_cache(key, value).await;
+
+        // count in cache
+        self.count_on_cache(key).await
+    }
+
+    pub async fn sync_to_backend(&self) -> Result<(), Box<dyn Error>> {
+        for (key, value) in self.cache.lock().await.iter() {
+            let _ = self.backend.set(key, *value).await;
+        }
+
+        Ok(())
     }
 }
