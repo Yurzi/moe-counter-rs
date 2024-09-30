@@ -7,11 +7,9 @@ pub trait KVDBClient: Send + Sync {
     async fn init(&self) -> Result<(), Box<dyn Error>>;
     async fn get(&self, key: &str) -> Option<Self::Value>;
     async fn set(&self, key: &str, value: Self::Value) -> Result<(), Box<dyn Error>>;
-    async fn list(&self) -> Result<HashMap<String, Self::Value>, Box<dyn Error>>;
 }
 
 pub struct SqliteClient {
-    db_path: String,
     table_name: String,
     connection: Arc<Mutex<rusqlite::Connection>>,
 }
@@ -22,7 +20,6 @@ impl SqliteClient {
             rusqlite::Connection::open(path).expect(&format!("failed to open db on {}", path));
 
         SqliteClient {
-            db_path: path.to_string(),
             table_name: table_name.to_string(),
             connection: Arc::new(Mutex::new(connection)),
         }
@@ -80,22 +77,6 @@ impl KVDBClient for SqliteClient {
             .execute(&sql, rusqlite::params![key, value])?;
 
         Ok(())
-    }
-
-    async fn list(&self) -> Result<HashMap<String, Self::Value>, Box<dyn Error>> {
-        let sql = format!("SELECT key, value FROM {}", self.table_name);
-        let conn = self.connection.lock().await;
-        let mut stmt = conn.prepare(&sql)?;
-        let mut kv_map = HashMap::new();
-        let mut rows = stmt.query([])?;
-
-        while let Some(row) = rows.next()? {
-            let key: String = row.get(0)?;
-            let value: Self::Value = row.get(1)?;
-            kv_map.insert(key, value);
-        }
-
-        Ok(kv_map)
     }
 }
 

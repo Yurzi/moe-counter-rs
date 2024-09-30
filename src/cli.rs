@@ -2,8 +2,6 @@ use clap::Parser;
 use clap::{arg, command};
 use serde::{Deserialize, Serialize};
 
-const APP_NAME: &'static str = "moe-counter";
-
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Sqlite {
     pub path: String,

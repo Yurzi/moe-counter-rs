@@ -18,10 +18,7 @@ use clap::Parser;
 use cli::read_config;
 use db_adpater::DBManager;
 use serde::{Deserialize, Serialize};
-use tokio::{
-    signal,
-    sync::{Mutex, RwLock},
-};
+use tokio::signal;
 
 async fn status() -> String {
     "everything is ok".to_string()
@@ -32,13 +29,6 @@ struct CountGetParams {
     theme: Option<String>,
     format: Option<String>,
     length: Option<u32>,
-}
-
-fn request_err(msg: &str) -> Response<Body> {
-    Response::builder()
-        .status(StatusCode::BAD_REQUEST)
-        .body(Body::from(msg.to_string()))
-        .unwrap()
 }
 
 fn internal_err(msg: &str) -> Response<Body> {

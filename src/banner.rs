@@ -99,22 +99,17 @@ impl From<&DynamicImageWithFormat> for SvgImage {
 
 #[derive(Debug, Clone)]
 pub struct Theme {
-    name: String,
     digits: HashMap<u32, DynamicImageWithFormat>,
     svg_digits: HashMap<u32, SvgImage>,
 }
 
 impl Theme {
-    fn new(name: &str, digits: HashMap<u32, DynamicImageWithFormat>) -> Self {
+    fn new(digits: HashMap<u32, DynamicImageWithFormat>) -> Self {
         let mut svg_digits = HashMap::new();
         for (key, val) in digits.iter() {
             svg_digits.insert(*key, val.into());
         }
-        Theme {
-            name: name.to_string(),
-            digits,
-            svg_digits,
-        }
+        Theme { digits, svg_digits }
     }
 
     pub fn gen_webp(&self, number: u64, digits_count: u32) -> ImageResult<DynamicImageWithFormat> {
@@ -272,7 +267,7 @@ impl ThemeManager {
             }
 
             // add this theme to manager
-            let theme = Theme::new(&theme_name, theme_images);
+            let theme = Theme::new(theme_images);
             theme_manager.themes.insert(theme_name, theme);
         }
 
