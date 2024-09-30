@@ -1,6 +1,6 @@
 # Moe-Counter-Rs
 
-使用 Rust 实现的，可跨平台的多种风格可选的萌萌计数器。
+使用 Rust 实现的，可跨平台的多种风格可选的萌萌计数器。使用 `Sqlite` 作为后端数据库，使用 `HashMap` 将计数缓存于内存。
 
 <details>
 <summary>More theme</summary>
