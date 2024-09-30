@@ -244,6 +244,10 @@ async fn shutdown_signal() {
     signal::ctrl_c().await.expect("Failed to listen to ctrl-c");
 }
 #[cfg(target_os = "linux")]
-async fn shutdown_signal(should_exit: &AtomicBool) {
-    unimplemented!()
+async fn shutdown_signal() {
+    let mut stream = signal::unix::signal(signal::unix::SignalKind::terminate()).unwrap();
+    tokio::select! {
+        _ = stream.recv() => {}
+        _ = tokio::signal::ctrl_c() => {}
+    }
 }
