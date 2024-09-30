@@ -47,7 +47,7 @@ impl Default for Config {
 }
 
 #[derive(Parser, Debug)]
-#[command(author, version, about, long_about = None)]
+#[command(version, about, long_about = None)]
 pub struct CliArgs {
     #[arg(
         short,

@@ -3,13 +3,13 @@ mod cli;
 mod db_adpater;
 mod utils;
 
-use std::sync::{atomic::AtomicBool, Arc};
+use std::sync::Arc;
 
 use axum::{
     body::Body,
     extract::{Path, Query, State},
     http::{Response, StatusCode},
-    response::IntoResponse,
+    response::{Html, IntoResponse},
     routing::get,
     Router,
 };
@@ -221,6 +221,10 @@ async fn main() {
     // initialize tracing
     tracing_subscriber::fmt::init();
     let app = Router::new()
+        .route(
+            "/",
+            get(|| async { Html::from("Ciallo～(∠・ω< )⌒★, this is a Moe Counter. Please see <a href=\"https://github.com/Yurzi/moe-counter-rs\">Moe-Counter-Rs</a> for details") }),
+        )
         .route("/status", get(status))
         .route("/favicon.ico", get(favicon))
         .route("/demo", get(demo))
