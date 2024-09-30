@@ -3,7 +3,7 @@ mod cli;
 mod db_adpater;
 mod utils;
 
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 use axum::{
     body::Body,
@@ -16,7 +16,9 @@ use axum::{
 use banner::ThemeManager;
 use clap::Parser;
 use cli::read_config;
+use db_adpater::DBManager;
 use serde::{Deserialize, Serialize};
+use tokio::sync::{Mutex, RwLock};
 
 async fn status() -> String {
     "everything is ok".to_string()
@@ -26,6 +28,7 @@ async fn status() -> String {
 struct CountGetParams {
     theme: Option<String>,
     format: Option<String>,
+    length: Option<u32>,
 }
 
 fn request_err(msg: &str) -> Response<Body> {
@@ -47,36 +50,32 @@ async fn count(
     Query(params): Query<CountGetParams>,
     State(app_state): State<SharedState>,
 ) -> impl IntoResponse {
-    let config = app_state.config.read();
-
-    if config.is_err() {
-        return internal_err("");
-    }
-    let config = config.unwrap();
+    let config = app_state.config.read().await;
 
     let request_theme = params.theme.unwrap_or(config.default_theme.clone());
     let request_format = params.format.unwrap_or(config.default_format.clone());
+    let request_len = params.length.unwrap_or(0);
+    let digit_count = config.digit_count.max(request_len);
 
-    println!(
-        "[GET] /{} with theme: {}, format: {}",
-        key, request_theme, request_format
+    let theme_manager = app_state.theme_manager.read().await;
+
+    let theme = theme_manager.get(&request_theme).unwrap_or(
+        theme_manager
+            .get(&config.default_theme)
+            .unwrap_or(theme_manager.get("moebooru").unwrap()),
     );
 
-    let theme_manager = app_state.theme_manager.read();
-    if theme_manager.is_err() {
-        return internal_err("failed to get themes");
-    }
-    let theme_manager = theme_manager.unwrap();
+    let mut db_manager = app_state.db_manager.lock().await;
+    let number = db_manager.count(&key).await.unwrap_or(0);
 
-    let theme = theme_manager
-        .get(&request_theme)
-        .unwrap_or(theme_manager.get(&config.default_theme).unwrap());
-
-    let number = 114514;
+    println!(
+        "[GET] /{} with theme: {}, format: {}, length: {}, count: {}",
+        key, request_theme, request_format, digit_count, number
+    );
 
     let response = match request_format.as_str() {
         "webp" => {
-            let image = theme.gen_webp(number, config.digit_count);
+            let image = theme.gen_webp(number, digit_count);
             if image.is_err() {
                 return internal_err("failed to gen webp image");
             }
@@ -95,7 +94,7 @@ async fn count(
                 .unwrap()
         }
         _ => {
-            let image = theme.gen_svg(number, config.digit_count, config.pixelated);
+            let image = theme.gen_svg(number, digit_count, config.pixelated);
             if image.is_err() {
                 return internal_err("failed to gen svg image");
             }
@@ -114,13 +113,15 @@ async fn count(
 struct AppState {
     config: RwLock<cli::Config>,
     theme_manager: RwLock<ThemeManager>,
+    db_manager: Mutex<DBManager>,
 }
 
 impl AppState {
-    fn new(config: cli::Config, theme_manager: ThemeManager) -> Self {
+    fn new(config: cli::Config, theme_manager: ThemeManager, db_manager: DBManager) -> Self {
         AppState {
             config: RwLock::new(config),
             theme_manager: RwLock::new(theme_manager),
+            db_manager: Mutex::new(db_manager),
         }
     }
 }
@@ -136,7 +137,14 @@ async fn main() {
     // init
     let theme_manager = ThemeManager::new(&cfg.themes_dir).expect("failed to load themes");
 
-    let shared_state = SharedState::new(AppState::new(cfg.clone(), theme_manager));
+    let mut db_manager = DBManager::new(db_adpater::SqliteClient::new(
+        &cfg.sqlite.path,
+        &cfg.sqlite.table_name,
+    ));
+
+    db_manager.init().await.expect("failed to init database");
+
+    let shared_state = SharedState::new(AppState::new(cfg.clone(), theme_manager, db_manager));
 
     // initialize tracing
     tracing_subscriber::fmt::init();

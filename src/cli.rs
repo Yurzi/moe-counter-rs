@@ -7,12 +7,14 @@ const APP_NAME: &'static str = "moe-counter";
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Sqlite {
     pub path: String,
+    pub table_name: String,
 }
 
 impl Default for Sqlite {
     fn default() -> Self {
         Sqlite {
             path: "data.db".to_string(),
+            table_name: "count".to_string(),
         }
     }
 }
@@ -35,7 +37,7 @@ impl Default for Config {
             listen: "127.0.0.1".to_string(),
             port: 9534,
             themes_dir: "themes".to_string(),
-            default_theme: "meoboour".to_string(),
+            default_theme: "moebooru".to_string(),
             digit_count: 0,
             default_format: "svg".to_string(),
             pixelated: false,

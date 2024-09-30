@@ -1,17 +1,18 @@
 use std::{collections::HashMap, error::Error};
+use tokio::sync::Mutex;
 
-pub trait KVDBClient {
+pub trait KVDBClient: Send + Sync {
     type Value;
-    fn init(&mut self) -> Result<(), Box<dyn Error>>;
-    fn get(&self, key: &str) -> Option<Self::Value>;
-    fn set(&mut self, key: &str, value: Self::Value) -> Result<(), Box<dyn Error>>;
-    fn list(&self) -> Result<HashMap<String, Self::Value>, Box<dyn Error>>;
+    async fn init(&mut self) -> Result<(), Box<dyn Error>>;
+    async fn get(&self, key: &str) -> Option<Self::Value>;
+    async fn set(&mut self, key: &str, value: Self::Value) -> Result<(), Box<dyn Error>>;
+    async fn list(&self) -> Result<HashMap<String, Self::Value>, Box<dyn Error>>;
 }
 
-struct SqliteClient {
+pub struct SqliteClient {
     db_path: String,
     table_name: String,
-    connection: rusqlite::Connection,
+    connection: Mutex<rusqlite::Connection>,
 }
 
 impl SqliteClient {
@@ -22,14 +23,14 @@ impl SqliteClient {
         SqliteClient {
             db_path: path.to_string(),
             table_name: table_name.to_string(),
-            connection,
+            connection: Mutex::new(connection),
         }
     }
 }
 
 impl KVDBClient for SqliteClient {
     type Value = u64;
-    fn init(&mut self) -> Result<(), Box<dyn Error>> {
+    async fn init(&mut self) -> Result<(), Box<dyn Error>> {
         let sql = format!(
             "CREATE TABLE IF NOT EXISTS {} (
                 key TEXT NOT NULL UNIQUE,
@@ -38,13 +39,14 @@ impl KVDBClient for SqliteClient {
             self.table_name
         );
 
-        let _ret = self.connection.execute(&sql, ())?;
+        let _ret = self.connection.lock().await.execute(&sql, ())?;
         Ok(())
     }
 
-    fn get(&self, key: &str) -> Option<Self::Value> {
+    async fn get(&self, key: &str) -> Option<Self::Value> {
         let sql = format!("SELECT value FROM {} WHERE key = ?1", self.table_name);
-        let stmt = self.connection.prepare(&sql);
+        let conn = self.connection.lock().await;
+        let stmt = conn.prepare(&sql);
         if stmt.is_err() {
             return None;
         }
@@ -69,18 +71,21 @@ impl KVDBClient for SqliteClient {
         Some(res)
     }
 
-    fn set(&mut self, key: &str, value: Self::Value) -> Result<(), Box<dyn Error>> {
-        let sql = format!("INSERT INTO {} (key, value) VALUES (?1. ?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value", self.table_name);
+    async fn set(&mut self, key: &str, value: Self::Value) -> Result<(), Box<dyn Error>> {
+        let sql = format!("INSERT INTO {} (key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value", self.table_name);
         let _ret = self
             .connection
+            .lock()
+            .await
             .execute(&sql, rusqlite::params![key, value])?;
 
         Ok(())
     }
 
-    fn list(&self) -> Result<HashMap<String, Self::Value>, Box<dyn Error>> {
+    async fn list(&self) -> Result<HashMap<String, Self::Value>, Box<dyn Error>> {
         let sql = format!("SELECT key, value FROM {}", self.table_name);
-        let mut stmt = self.connection.prepare(&sql)?;
+        let conn = self.connection.lock().await;
+        let mut stmt = conn.prepare(&sql)?;
         let mut kv_map = HashMap::new();
         let mut rows = stmt.query([])?;
 
@@ -94,50 +99,38 @@ impl KVDBClient for SqliteClient {
     }
 }
 
-struct DBManager {
-    backend: Box<dyn KVDBClient<Value = u64>>,
-    cache_db: Option<Box<dyn KVDBClient<Value = u64>>>,
+pub struct DBManager {
+    backend: SqliteClient,
 }
 
 impl DBManager {
-    pub fn new(
-        backend: Box<dyn KVDBClient<Value = u64>>,
-        cache_db: Option<Box<dyn KVDBClient<Value = u64>>>,
-    ) -> Self {
-        DBManager { backend, cache_db }
+    pub fn new(backend: SqliteClient) -> Self {
+        DBManager { backend }
     }
 
-    pub fn init(&mut self) -> Result<(), Box<dyn Error>> {
-        self.backend.init()?;
-        if self.cache_db.is_some() {
-            self.cache_db.as_mut().unwrap().init()?;
-        }
-
-        Ok(())
+    pub async fn init(&mut self) -> Result<(), Box<dyn Error>> {
+        self.backend.init().await
     }
 
-    fn conut_on_backend(&mut self, key: &str) -> Option<u64> {
+    async fn conut_on_backend(&mut self, key: &str) -> Option<u64> {
         // get count on db
-        let prev_count = self.backend.get(key).unwrap_or(0);
+        let prev_count = self.backend.get(key).await.unwrap_or(0);
 
         // add count
         let now_count = prev_count.saturating_add(1);
 
         // set count to db
-        let ret = self.backend.set(key, now_count);
+        let ret = self.backend.set(key, now_count).await;
 
         if ret.is_err() {
+            println!("faile to write db: {:?}", ret);
             return None;
         }
 
         Some(now_count)
     }
 
-    pub fn count(&mut self, key: &str) -> Option<u64> {
-        if self.cache_db.is_none() {
-            return self.conut_on_backend(key);
-        }
-
-        unimplemented!()
+    pub async fn count(&mut self, key: &str) -> Option<u64> {
+        self.conut_on_backend(key).await
     }
 }
