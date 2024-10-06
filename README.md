@@ -31,7 +31,7 @@
 
 ### Install
 
-You can build this project and deploy on you own server.
+You can build this project and deploy the binary on you own server.
 
 ### Configuration
 

@@ -25,6 +25,22 @@ impl Deref for DynamicImageWithFormat {
         &self.data
     }
 }
+
+impl TryFrom<rust_embed::EmbeddedFile> for DynamicImageWithFormat {
+    type Error = Box<dyn Error>;
+    fn try_from(value: rust_embed::EmbeddedFile) -> Result<Self, Self::Error> {
+        let bytes = Cursor::new(value.data.as_ref());
+        let reader = ImageReader::new(bytes).with_guessed_format()?;
+        let format = reader.format().ok_or(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "unable to detect image format",
+        ))?;
+        let data = reader.decode()?;
+
+        Ok(DynamicImageWithFormat { data, format })
+    }
+}
+
 impl DynamicImageWithFormat {
     pub fn open<P>(path: P) -> ImageResult<Self>
     where
@@ -190,6 +206,10 @@ impl Theme {
     }
 }
 
+#[derive(rust_embed::Embed)]
+#[folder = "themes/"]
+struct ThemeAssets;
+
 #[derive(Debug, Clone)]
 pub struct ThemeManager {
     themes_dir: String,
@@ -198,12 +218,88 @@ pub struct ThemeManager {
 
 impl ThemeManager {
     pub fn new(themes_dir: &str) -> std::io::Result<Self> {
-        let mut theme_manager = ThemeManager {
-            themes_dir: themes_dir.to_string(),
-            themes: HashMap::new(),
-        };
-        // iter themes_dir to found all avaliable theme
+        let mut themes = HashMap::new();
 
+        let themes_from_internal = Self::load_themes_from_internal();
+        let themes_from_external = Self::load_themes_from_external(themes_dir);
+
+        match themes_from_internal {
+            Ok(assets) => themes.extend(assets),
+            Err(e) => println!("[Warn] Failed to load internal assets {:?}", e),
+        };
+        match themes_from_external {
+            Ok(assets) => themes.extend(assets),
+            Err(e) => println!("[Warn] Failed to load external assets {:?}", e),
+        };
+
+        let theme_manager = ThemeManager {
+            themes_dir: themes_dir.to_string(),
+            themes,
+        };
+        Ok(theme_manager)
+    }
+
+    fn load_themes_from_internal() -> std::io::Result<HashMap<String, Theme>> {
+        let mut assets: HashMap<String, HashMap<u32, DynamicImageWithFormat>> = HashMap::new();
+
+        // iter embed assets
+        for file_path in ThemeAssets::iter() {
+            // assumption: the path is <theme_name>/<digit>.ext
+
+            let path = std::path::Path::new(file_path.as_ref());
+            let mut path_iter = path.components().rev();
+            let file_name = path.file_stem();
+
+            let _ = path_iter.next();
+            let theme_name = path_iter.next();
+            if theme_name.is_none() || file_name.is_none() {
+                continue;
+            }
+
+            let file_name = file_name.unwrap();
+
+            let digit = file_name.to_string_lossy().parse();
+            if digit.is_err() {
+                continue;
+            }
+
+            let digit: u32 = digit.unwrap();
+
+            // load image
+            let theme_name = theme_name.unwrap().as_os_str().to_string_lossy();
+
+            // init hashmap
+            let themes = assets.get(theme_name.as_ref());
+            if themes.is_none() {
+                assets.insert(theme_name.to_string(), HashMap::new());
+            }
+            let themes = assets.get_mut(theme_name.as_ref()).unwrap();
+            let image = ThemeAssets::get(file_path.as_ref()).unwrap().try_into();
+
+            if image.is_err() {
+                continue;
+            }
+
+            let image = image.unwrap();
+
+            themes.insert(digit, image);
+        }
+
+        // check all themes
+        let mut themes = HashMap::new();
+        for (theme_name, digits) in assets.drain() {
+            if digits.len() == 10 {
+                themes.insert(theme_name, Theme::new(digits));
+            }
+        }
+
+        Ok(themes)
+    }
+
+    fn load_themes_from_external(themes_dir: &str) -> std::io::Result<HashMap<String, Theme>> {
+        let mut themes = HashMap::new();
+
+        // iter themes_dir to found all avaliable theme
         // check path
         if !Path::new(themes_dir).try_exists()? {
             return Err(std::io::Error::new(
@@ -268,12 +364,11 @@ impl ThemeManager {
 
             // add this theme to manager
             let theme = Theme::new(theme_images);
-            theme_manager.themes.insert(theme_name, theme);
+            themes.insert(theme_name, theme);
         }
 
-        Ok(theme_manager)
+        Ok(themes)
     }
-
     pub fn get(&self, theme_name: &str) -> std::io::Result<&Theme> {
         match self.themes.get(theme_name) {
             Some(theme) => Ok(theme),

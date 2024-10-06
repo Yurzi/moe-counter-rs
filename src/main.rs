@@ -3,7 +3,10 @@ mod cli;
 mod db_adpater;
 mod utils;
 
-use std::sync::Arc;
+use std::{
+    sync::{atomic::AtomicBool, Arc},
+    time::Duration,
+};
 
 use axum::{
     body::Body,
@@ -18,7 +21,7 @@ use clap::Parser;
 use cli::read_config;
 use db_adpater::DBManager;
 use serde::{Deserialize, Serialize};
-use tokio::signal;
+use tokio::{signal, time};
 
 async fn status() -> String {
     "everything is ok".to_string()
@@ -176,6 +179,7 @@ struct AppState {
     config: cli::Config,
     theme_manager: ThemeManager,
     db_manager: DBManager,
+    should_exit: AtomicBool,
 }
 
 impl AppState {
@@ -184,6 +188,7 @@ impl AppState {
             config,
             theme_manager,
             db_manager,
+            should_exit: AtomicBool::new(false),
         }
     }
 }
@@ -224,11 +229,32 @@ async fn main() {
         .await
         .unwrap();
 
+    // register a loop task for sync backend
+    let local_state = shared_state.clone();
+    let sync_to_backend_handle = tokio::spawn(async move {
+        let mut interval = time::interval(Duration::from_secs(15 * 60));
+
+        while !local_state
+            .should_exit
+            .load(std::sync::atomic::Ordering::Relaxed)
+        {
+            interval.tick().await;
+            let ret = local_state.db_manager.sync_to_backend().await;
+            println!("[Info] sync with backend");
+            if ret.is_err() {
+                println!("[Warn] unable to sync with backend");
+            }
+        }
+    });
+
     println!("listen on: http://{}:{}", cfg.listen, cfg.port);
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal(shared_state.clone()))
         .await
         .unwrap();
+
+    // cancel timer job
+    sync_to_backend_handle.abort();
 
     println!("[Shutdown]")
 }
@@ -236,6 +262,9 @@ async fn main() {
 #[cfg(target_os = "windows")]
 async fn shutdown_signal(app_state: SharedState) {
     signal::ctrl_c().await.expect("Failed to listen to ctrl-c");
+    app_state
+        .should_exit
+        .store(true, std::sync::atomic::Ordering::Relaxed);
     let _ = app_state.db_manager.sync_to_backend().await;
 }
 #[cfg(target_os = "linux")]
@@ -245,5 +274,8 @@ async fn shutdown_signal(app_state: SharedState) {
         _ = stream.recv() => {}
         _ = tokio::signal::ctrl_c() => {}
     }
+    app_state
+        .should_exit
+        .store(true, std::sync::atomic::Ordering::Relaxed);
     let _ = app_state.db_manager.sync_to_backend().await;
 }
