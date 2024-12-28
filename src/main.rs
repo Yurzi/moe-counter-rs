@@ -85,6 +85,7 @@ async fn count(
             let image_data = image_data.unwrap();
             Response::builder()
                 .status(StatusCode::OK)
+                .header("Cache-Control", "no-cache")
                 .header("Content-Type", image.format().to_mime_type())
                 .body(Body::from(image_data))
                 .unwrap()
@@ -97,6 +98,7 @@ async fn count(
             let image = image.unwrap();
             Response::builder()
                 .status(StatusCode::OK)
+                .header("Cache-Control", "no-cache")
                 .header("Content-Type", "image/svg+xml")
                 .body(Body::from(image.data().to_string()))
                 .unwrap()
@@ -116,7 +118,7 @@ async fn demo(
     let request_format = params.format.unwrap_or(config.default_format.clone());
 
     let digit_count = 10;
-    let number = 0123456789;
+    const NUMBER: u64 = 123456789;
 
     let theme_manager = &app_state.theme_manager;
     let theme = theme_manager.get(&request_theme).unwrap_or(
@@ -125,13 +127,13 @@ async fn demo(
             .unwrap_or(theme_manager.get("moebooru").unwrap()),
     );
     println!(
-        "[GET] /{} | theme: {}, format: {}, length: {}, count: {}",
-        "demo", request_theme, request_format, digit_count, number
+        "[GET] /demo | theme: {}, format: {}, length: {}, count: {}",
+        request_theme, request_format, digit_count, NUMBER
     );
 
     let response = match request_format.as_str() {
         "webp" => {
-            let image = theme.gen_webp(number, digit_count);
+            let image = theme.gen_webp(NUMBER, digit_count);
             if image.is_err() {
                 return internal_err("failed to gen webp image");
             }
@@ -150,7 +152,7 @@ async fn demo(
                 .unwrap()
         }
         _ => {
-            let image = theme.gen_svg(number, digit_count, config.pixelated);
+            let image = theme.gen_svg(NUMBER, digit_count, config.pixelated);
             if image.is_err() {
                 return internal_err("failed to gen svg image");
             }
