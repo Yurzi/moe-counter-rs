@@ -74,7 +74,7 @@ impl DynamicImageWithFormat {
     }
 
     pub fn format(&self) -> ImageFormat {
-        self.format.clone()
+        self.format
     }
 }
 

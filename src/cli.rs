@@ -66,11 +66,11 @@ pub fn read_config(config_path: &str) -> Config {
         // create a default config
         let cfg = Config::default();
         confy::store_path(config_path, cfg.clone())
-            .expect(&format!("failed to init config file: {config_path}"));
+            .unwrap_or_else(|_| panic!("failed to init config file: {config_path}"));
         return cfg;
     }
     // read config from file
-    let cfg =
-        confy::load_path(config_path).expect(&format!("failed to load config file: {config_path}"));
-    cfg
+
+    confy::load_path(config_path)
+        .unwrap_or_else(|_| panic!("failed to load config file: {config_path}"))
 }

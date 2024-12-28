@@ -16,8 +16,8 @@ pub struct SqliteClient {
 
 impl SqliteClient {
     pub fn new(path: &str, table_name: &str) -> Self {
-        let connection =
-            rusqlite::Connection::open(path).expect(&format!("failed to open db on {}", path));
+        let connection = rusqlite::Connection::open(path)
+            .unwrap_or_else(|_| panic!("failed to open db on {}", path));
 
         SqliteClient {
             table_name: table_name.to_string(),
@@ -57,15 +57,14 @@ impl KVDBClient for SqliteClient {
 
         let mut value_iter = value_iter.unwrap();
         // actually key is unqiue, so just iter all and sum.
-        let ret = match value_iter.next() {
+
+        match value_iter.next() {
             Some(val) => match val {
                 Ok(value) => Some(value),
                 Err(_) => None,
             },
             None => None,
-        };
-
-        ret
+        }
     }
 
     async fn set(&self, key: &str, value: Self::Value) -> Result<(), Box<dyn Error>> {

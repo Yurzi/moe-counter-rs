@@ -7,8 +7,5 @@ pub fn u64_to_digit(number: u64, digit_count: u32) -> Vec<u32> {
         number.insert(0, '0');
     }
 
-    number
-        .chars()
-        .map(|c| c.to_digit(10).unwrap() as u32)
-        .collect()
+    number.chars().map(|c| c.to_digit(10).unwrap()).collect()
 }
