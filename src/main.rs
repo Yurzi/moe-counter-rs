@@ -85,8 +85,11 @@ async fn count(
             let image_data = image_data.unwrap();
             Response::builder()
                 .status(StatusCode::OK)
-                .header("Cache-Control", "no-cache")
                 .header("Content-Type", image.format().to_mime_type())
+                .header("Cache-Control", "max-age=0")
+                .header("Cache-Control", "no-cache")
+                .header("Cache-Control", "no-store")
+                .header("Cache-Control", "must-revalidate")
                 .body(Body::from(image_data))
                 .unwrap()
         }
@@ -98,8 +101,11 @@ async fn count(
             let image = image.unwrap();
             Response::builder()
                 .status(StatusCode::OK)
-                .header("Cache-Control", "no-cache")
                 .header("Content-Type", "image/svg+xml")
+                .header("Cache-Control", "max-age=0")
+                .header("Cache-Control", "no-cache")
+                .header("Cache-Control", "no-store")
+                .header("Cache-Control", "must-revalidate")
                 .body(Body::from(image.data().to_string()))
                 .unwrap()
         }
